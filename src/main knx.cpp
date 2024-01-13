@@ -2,22 +2,19 @@
   Main of FingerprintDoorbell 
  ****************************************************/
 
-#include <WiFi.h>
 #include <DNSServer.h>
 #include <time.h>
 #include <ESPAsyncWebServer.h>
 #include <AsyncElegantOTA.h>
-#include <SPIFFS.h>
+#include <WiFi.h>
 #include "esp_sntp.h"
+#include <LITTLEFS.h>
+#define SPIFFS LittleFS  //replace spiffs
 #include <PubSubClient.h>
 #include "FingerprintManager.h"
 #include "SettingsManager.h"
 #include "global.h"
 
-#define ETH_CLK_MODE ETH_CLOCK_GPIO17_OUT
-#define ETH_PHY_POWER 12
-#include <ETH.h>
-static bool eth_connected = false;
 //KNX
 #ifdef KNXFEATURE
 #include "esp-knx-ip.h"
@@ -41,9 +38,8 @@ bool ringEnableState = true;
 bool doorEnableState = true;
 #endif
 
-enum class Mode { scan,  wait,  enroll, wificonfig, maintenance };
-
-const char* VersionInfo = "0.45";
+enum class Mode { scan, wait, enroll, wificonfig, maintenance };
+const char* VersionInfo = "0.60";
 
 // ===================================================================================================================
 // Caution: below are not the credentials for connecting to your home network, they are for the Access Point mode!!!
@@ -52,12 +48,12 @@ const char* WifiConfigSsid = "FingerprintDoorbell-Config"; // SSID used for WiFi
 const char* WifiConfigPassword = "12345678"; // password used for WiFi when in Access Point mode for configuration. Min. 8 chars needed!
 IPAddress   WifiConfigIp(192, 168, 4, 1); // IP of access point in wifi config mode
 
-const long  gmtOffset_sec = 0; // UTC Time
-const int   daylightOffset_sec = 0; // UTC Time
-const int   doorbellOutputPin = 19; // pin connected to the doorbell (when using hardware connection instead of mqtt to ring the bell)
+#define TIME_ZONE "MEZ-1MESZ-2,M3.5.0/02:00:00,M10.5.0/03:00:00"    
 
 const int   templateSamples = 3; //Fingerprint Samples for Template
 long rssi = 0.0;
+
+//#define CUSTOM_GPIOS
 #ifdef CUSTOM_GPIOS
   const int   customOutput1 = 18; // not used internally, but can be set over MQTT
   const int   customOutput2 = 26; // not used internally, but can be set over MQTT
@@ -65,9 +61,14 @@ long rssi = 0.0;
   const int   customInput2 = 22; // not used internally, but changes are published over MQTT
   bool customInput1Value = false;
   bool customInput2Value = false;
+  bool triggerCustomOutput1 = false;
+  bool triggerCustomOutput2 = false;
+
+  // Timer stuff Custom_GPIOS  
+  const unsigned long customOutput1TriggerTime = 4 * 1000UL; //Trigger 4000ms
+  const unsigned long customOutput2TriggerTime = 4 * 1000UL; 
 #endif
 
-const int logMessagesCount = 5;
 // Timer stuff 
   const unsigned long rssiStatusIntervall = 1 * 15000UL; //Trigger every 15 Seconds
   const unsigned long doorBell_impulseDuration = 1 * 1000UL; 
@@ -115,6 +116,7 @@ AsyncWebServer webServer(80); // AsyncWebServer  on port 80
 AsyncEventSource events("/events"); // event source (Server-Sent events)
 
 WiFiClient espClient;
+
 #ifndef MQTTFEATURE
 #define SETTINGSPATH "/settings.html"
 #endif
@@ -124,11 +126,11 @@ WiFiClient espClient;
 
 #ifdef MQTTFEATURE
 PubSubClient mqttClient(espClient);
+
 long lastMsg = 0;
 char msg[50];
 int value = 0;
 bool mqttConfigValid = true;
-
 #endif
 
 
@@ -634,7 +636,9 @@ String getLogMessagesAsHtml() {
 String getTimestampString(){
   struct tm timeinfo;
   if(!getLocalTime(&timeinfo, 5000)){
+    #ifdef DEBUG
     Serial.println("Failed to obtain time");
+    #endif
     return "no time";
   }
   
@@ -693,8 +697,8 @@ String processor(const String& var){
   } else if (var == "MQTT_ROOTTOPIC") {
     return settingsManager.getAppSettings().mqttRootTopic;
   } else if (var == "NTP_SERVER") {
-    return settingsManager.getAppSettings().ntpServer;
-     } else if (var == "KNXROUTER_IP") {
+    return settingsManager.getAppSettings().ntpServer;    
+    } else if (var == "KNXROUTER_IP") {
     return settingsManager.getKNXSettings().knxrouter_ip;
     } else if (var == "DOOR1_GA") {
     return settingsManager.getKNXSettings().door1_ga;
@@ -748,8 +752,10 @@ String processor(const String& var){
 
 // send LastMessage to websocket clients
 void notifyClients(String message) {
-  String messageWithTimestamp = "[" + getTimestampString() + "]: " + message;
+  String messageWithTimestamp = "[" + getTimestampString() + "]: " + message;  
+  #ifdef DEBUG
   Serial.println(messageWithTimestamp);
+  #endif
   addLogMessage(messageWithTimestamp);
   events.send(getLogMessagesAsHtml().c_str(),"message",millis(),1000);
   #ifdef MQTTFEATURE
@@ -758,8 +764,12 @@ void notifyClients(String message) {
   #endif
 }
 
+
+
 void updateClientsFingerlist(String fingerlist) {
+  #ifdef DEBUG
   Serial.println("New fingerlist was sent to clients");
+  #endif
   events.send(fingerlist.c_str(),"fingerlist",millis(),1000);
 }
 
@@ -790,7 +800,9 @@ bool checkPairingValid() {
        // first boot, do pairing automatically so the user does not have to do this manually
        return doPairing();
      } else {
+      #ifdef DEBUG
       Serial.println("Pairing has been invalidated previously.");   
+      #endif
       return false;
      }
    }
@@ -814,65 +826,38 @@ bool checkPairingValid() {
   }
 }
 
-void WiFiEvent(WiFiEvent_t event)
-{
-  switch (event) {
-    case SYSTEM_EVENT_ETH_START:
-      Serial.println("ETH Started");
-      //set eth hostname here
-      ETH.setHostname("esp32-ethernet");
-      break;
-    case SYSTEM_EVENT_ETH_CONNECTED:
-      Serial.println("ETH Connected");
-      break;
-    case SYSTEM_EVENT_ETH_GOT_IP:
-      Serial.print("ETH MAC: ");
-      Serial.print(ETH.macAddress());
-      Serial.print(", IPv4: ");
-      Serial.print(ETH.localIP());
-      if (ETH.fullDuplex()) {
-        Serial.print(", FULL_DUPLEX");
-      }
-      Serial.print(", ");
-      Serial.print(ETH.linkSpeed());
-      Serial.println("Mbps");
-      eth_connected = true;
-      break;
-    case SYSTEM_EVENT_ETH_DISCONNECTED:
-      Serial.println("ETH Disconnected");
-      eth_connected = false;
-      break;
-    case SYSTEM_EVENT_ETH_STOP:
-      Serial.println("ETH Stopped");
-      eth_connected = false;
-      break;
-    default:
-      break;
-  }
-}
 
 bool initWifi() {
-  if (!eth_connected){
-    // Connect to Wi-Fi
-    WifiSettings wifiSettings = settingsManager.getWifiSettings();
-    WiFi.mode(WIFI_STA);
-    WiFi.config(INADDR_NONE, INADDR_NONE, INADDR_NONE, INADDR_NONE);
-    WiFi.setHostname(wifiSettings.hostname.c_str()); //define hostname
-    WiFi.begin(wifiSettings.ssid.c_str(), wifiSettings.password.c_str());
-    int counter = 0;
-    while (WiFi.status() != WL_CONNECTED) {
-      delay(1000);
-      Serial.println("Waiting for WiFi connection...");
-      counter++;
-      if (counter > 30)
-        return false;
-    }
+  // Connect to Wi-Fi
+  WifiSettings wifiSettings = settingsManager.getWifiSettings();
+  WiFi.mode(WIFI_STA);
+  WiFi.setHostname(wifiSettings.hostname.c_str()); //define hostname
+  
+  WiFi.begin(wifiSettings.ssid.c_str(), wifiSettings.password.c_str());
+    #ifdef DEBUG   
+    Serial.print("SSID: ");
+    Serial.println(wifiSettings.ssid.c_str());    
+    Serial.print("HOSTNAME: ");
+    Serial.println(wifiSettings.hostname.c_str());
+    #endif
+  int counter = 0;
+  while (WiFi.status() != WL_CONNECTED) {
+    delay(1000);
+    #ifdef DEBUG   
+    Serial.println("Waiting for WiFi connection...");    
+    #endif
+    counter++;
+    if (counter > 30)
+      return false;
   }
-    Serial.println("Connected!");
+  #ifdef DEBUG
+  Serial.println("Connected!");
+  #endif
 
   // Print ESP32 Local IP Address
+  #ifdef DEBUG
   Serial.println(WiFi.localIP());
-
+  #endif  
   return true;
 }
 
@@ -884,22 +869,53 @@ void initWiFiAccessPointForConfiguration() {
   // provided IP to all DNS request
   dnsServer.start(DNS_PORT, "*", WifiConfigIp);
 
+  #ifdef DEBUG
   Serial.print("AP IP address: ");
   Serial.println(WifiConfigIp); 
+  #endif
 }
 
+#ifdef DEBUG
+void cbSyncTime(struct timeval *tv)  // callback function to show when NTP was synchronized
+{
+  notifyClients("NTP time synced");  
+}
+#endif
 
 void startWebserver(){
   
   // Initialize SPIFFS
-  if(!SPIFFS.begin(true)){
-    Serial.println("An Error has occurred while mounting SPIFFS");
-    // return;
+  if(!SPIFFS.begin()){
+    #ifdef DEBUG
+    Serial.println(F("An Error has occurred while mounting SPIFFS"));
+    #endif    
+    //return;
   }
-
-  // Init time by NTP Client
-  configTime(gmtOffset_sec, daylightOffset_sec, settingsManager.getAppSettings().ntpServer.c_str());
+  // Init time by NTP Client  
+  String ntp_Server = settingsManager.getAppSettings().ntpServer;
+  #ifdef DEBUG
+    Serial.print("NTP Server: ");
+    Serial.println(ntp_Server);    
+  #endif  
   
+  // configTzTime(TIME_ZONE, ntpServer.c_str());   does not sync time, but uses wron local time after some days  
+  
+  setenv("TZ", TIME_ZONE, 1);
+  tzset();
+  sntp_setoperatingmode(SNTP_OPMODE_POLL);
+  sntp_setservername(0, ntp_Server.c_str());  
+  sntp_set_sync_mode(SNTP_SYNC_MODE_IMMED);    
+  sntp_init();     
+  
+  int retry = 0;
+	const int retry_count = 10;
+	while ((sntp_get_sync_status() == SNTP_SYNC_STATUS_RESET) && (++retry < retry_count)) {
+		#ifdef DEBUG
+    Serial.println((String)"Waiting for system time to be set... (" + retry + "/" + retry_count+")");
+    #endif
+		delay(2000);
+	}    
+
   // webserver for normal operating or wifi config?
   if (currentMode == Mode::wificonfig)
   {
@@ -914,7 +930,9 @@ void startWebserver(){
     webServer.on("/save", HTTP_GET, [](AsyncWebServerRequest *request){
       if(request->hasArg("hostname"))
       {
+        #ifdef DEBUG
         Serial.println("Save wifi config");
+        #endif
         WifiSettings settings = settingsManager.getWifiSettings();
         settings.hostname = request->arg("hostname");
         settings.ssid = request->arg("ssid");
@@ -945,7 +963,9 @@ void startWebserver(){
     // =======================
     events.onConnect([](AsyncEventSourceClient *client){
       if(client->lastId()){
+        #ifdef DEBUG
         Serial.printf("Client reconnected! Last message ID it got was: %u\n", client->lastId());
+        #endif
       }
       //send event with message "ready", id current millis
       // and set reconnect delay to 1 second
@@ -956,7 +976,7 @@ void startWebserver(){
     
     // Route for root / web page
     webServer.on("/", HTTP_GET, [](AsyncWebServerRequest *request){
-      request->send(SPIFFS, "/index.html", String(), false, processor);
+      request->send(SPIFFS, "/index.html", String(), false, processor);      
     });
 
     webServer.on("/enroll", HTTP_GET, [](AsyncWebServerRequest *request){
@@ -992,7 +1012,9 @@ void startWebserver(){
     webServer.on("/settings", HTTP_GET, [](AsyncWebServerRequest *request){
       if(request->hasArg("btnSaveSettings"))
       {
+        #ifdef DEBUG
         Serial.println("Save settings");
+        #endif
         AppSettings settings = settingsManager.getAppSettings();
         settings.tpScans = (uint16_t) request->arg("tp_scans").toInt();
         settings.mqttServer = request->arg("mqtt_server");
@@ -1004,7 +1026,7 @@ void startWebserver(){
         request->redirect("/");  
         shouldReboot = true;
       } else {
-           request->send(SPIFFS, SETTINGSPATH, String(), false, processor);
+        request->send(SPIFFS, SETTINGSPATH, String(), false, processor);
       }
     });
 
@@ -1039,13 +1061,14 @@ void startWebserver(){
       } else {
         request->send(SPIFFS, "/knx.html", String(), false, processor);
       }
-    });      
-
+    });
 
     webServer.on("/pairing", HTTP_GET, [](AsyncWebServerRequest *request){
       if(request->hasArg("btnDoPairing"))
       {
+        #ifdef DEBUG
         Serial.println("Do (re)pairing");
+        #endif
         doPairing();
         request->redirect("/");  
       } else {
@@ -1072,8 +1095,8 @@ void startWebserver(){
         request->redirect("/");  
         shouldReboot = true;
       } else {
-         request->send(SPIFFS, SETTINGSPATH, String(), false, processor);
-     }
+        request->send(SPIFFS, SETTINGSPATH, String(), false, processor);
+      }
     });
 
 
@@ -1089,7 +1112,7 @@ void startWebserver(){
         
       } else {
         request->send(SPIFFS, SETTINGSPATH, String(), false, processor);
-       }
+      }
     });
 
 
@@ -1122,18 +1145,25 @@ void startWebserver(){
 
 }
 
+
 #ifdef MQTTFEATURE
 void mqttCallback(char* topic, byte* message, unsigned int length) {
+  #ifdef DEBUG
   Serial.print("Message arrived on topic: ");
   Serial.print(topic);
   Serial.print(". Message: ");
+  #endif
   String messageTemp;
   
   for (int i = 0; i < length; i++) {
+    #ifdef DEBUG
     Serial.print((char)message[i]);
+    #endif
     messageTemp += (char)message[i];
   }
+  #ifdef DEBUG
   Serial.println();
+  #endif
 
   // Check incomming message for interesting topics
   if (String(topic) == String(settingsManager.getAppSettings().mqttRootTopic) + "/ignoreTouchRing") {
@@ -1144,7 +1174,7 @@ void mqttCallback(char* topic, byte* message, unsigned int length) {
       fingerManager.setIgnoreTouchRing(false);
     }
   }
-  
+
   if (String(topic) == String(settingsManager.getAppSettings().mqttRootTopic) + "/LedTouchRing") {
     if(messageTemp == "on"){
       fingerManager.setLedTouchRing(true);
@@ -1157,7 +1187,8 @@ void mqttCallback(char* topic, byte* message, unsigned int length) {
   #ifdef CUSTOM_GPIOS
     if (String(topic) == String(settingsManager.getAppSettings().mqttRootTopic) + "/customOutput1") {
       if(messageTemp == "on"){
-        digitalWrite(customOutput1, HIGH); 
+        triggerCustomOutput1 = true;
+        //digitalWrite(customOutput1, HIGH);         
       }
       else if(messageTemp == "off"){
         digitalWrite(customOutput1, LOW); 
@@ -1165,7 +1196,8 @@ void mqttCallback(char* topic, byte* message, unsigned int length) {
     }
     if (String(topic) == String(settingsManager.getAppSettings().mqttRootTopic) + "/customOutput2") {
       if(messageTemp == "on"){
-        digitalWrite(customOutput2, HIGH); 
+        triggerCustomOutput2 = true;
+        //digitalWrite(customOutput2, HIGH); 
       }
       else if(messageTemp == "off"){
         digitalWrite(customOutput2, LOW); 
@@ -1176,6 +1208,31 @@ void mqttCallback(char* topic, byte* message, unsigned int length) {
 }
 #endif
 
+#ifdef CUSTOM_GPIOS
+static unsigned long prevCustomOutput1Time = 0;
+static unsigned long prevCustomOutput2Time = 0;
+void doCustomOutputs(){
+  if (triggerCustomOutput1 == true){
+    triggerCustomOutput1 = false;
+    prevCustomOutput1Time = millis(); 
+    digitalWrite(customOutput1, HIGH);    
+  }
+  if (triggerCustomOutput2 == true){
+    triggerCustomOutput2 = false;
+    prevCustomOutput2Time = millis(); 
+    digitalWrite(customOutput2, HIGH);    
+  }
+  
+  if (digitalRead(customOutput1) == true && (millis() - prevCustomOutput1Time >= customOutput1TriggerTime))
+	{		
+    digitalWrite(customOutput1, LOW);
+  }
+  if (digitalRead(customOutput2) == true && (millis() - prevCustomOutput2Time >= customOutput2TriggerTime))
+	{	
+    digitalWrite(customOutput2, LOW);
+  }  
+}
+#endif
 
 void doWait(unsigned long duration){  
   static bool active = false;
@@ -1517,7 +1574,9 @@ void doRssiStatus(){
 #ifdef MQTTFEATURE
 void connectMqttClient() {
   if (!mqttClient.connected() && mqttConfigValid) {
+    #ifdef DEBUG
     Serial.print("(Re)connect to MQTT broker...");
+    #endif
     // Attempt to connect
     bool connectResult;
     
@@ -1531,7 +1590,10 @@ void connectMqttClient() {
 
     if (connectResult) {
       // success
+      #ifdef DEBUG
       Serial.println("connected");
+      #endif
+      notifyClients("Connected to MQTT Server.");
       // Subscribe
       mqttClient.subscribe((settingsManager.getAppSettings().mqttRootTopic + "/ignoreTouchRing").c_str(), 1); // QoS = 1 (at least once)
       mqttClient.subscribe((settingsManager.getAppSettings().mqttRootTopic + "/LedTouchRing").c_str(), 1); // QoS = 1 (at least once)
@@ -1547,7 +1609,7 @@ void connectMqttClient() {
         mqttConfigValid = false;
         notifyClients("Failed to connect to MQTT Server: bad credentials or not authorized. Will not try again, please check your settings.");
       } else {
-        notifyClients(String("Failed to connect to MQTT Server, rc=") + mqttClient.state() + ", try again in 30 seconds");
+        notifyClients(String("Failed to connect to MQTT Server, rc=") + mqttClient.state() + ", try again in 5 seconds");
       }
     }
   }
@@ -1561,24 +1623,27 @@ void doScan()
   Match match = fingerManager.scanFingerprint();
   #ifdef MQTTFEATURE
     String mqttRootTopic = settingsManager.getAppSettings().mqttRootTopic;
-  #endif 
+  #endif  
   switch(match.scanResult)
   {
     case ScanResult::noFinger:
       // standard case, occurs every iteration when no finger touchs the sensor
-        allowNewMatch = true;
+      allowNewMatch = true;
       if (match.scanResult != lastMatch.scanResult) {
+        #ifdef DEBUG
         Serial.println("no finger");
-         #ifdef MQTTFEATURE
+        #endif
+        #ifdef MQTTFEATURE
         mqttClient.publish((String(mqttRootTopic) + "/ring").c_str(), "off");
         mqttClient.publish((String(mqttRootTopic) + "/matchId").c_str(), "-1");
         mqttClient.publish((String(mqttRootTopic) + "/matchName").c_str(), "");
         mqttClient.publish((String(mqttRootTopic) + "/matchConfidence").c_str(), "-1");
         #endif
-      }
+      }      
       break; 
+
     case ScanResult::matchFound:
-      notifyClients( String("Match Found: ") + match.matchId + " - " + match.matchName  + " with confidence of " + match.matchConfidence );
+      
       //if (match.scanResult != lastMatch.scanResult) {
       if ((allowNewMatch == false) && (match.scanResult != lastMatch.scanResult)){
         notifyClients( String("Match Found-: ") + match.matchId + " - " + match.matchName  + " with confidence of " + match.matchConfidence ); 
@@ -1637,37 +1702,40 @@ void doScan()
           }
           #endif
           #ifdef MQTTFEATURE
+          #ifdef DEBUG
           Serial.println("MQTT message sent: Open the door!");
           #endif
-          
-        } else {
-          notifyClients("Security issue! Match was not sent by MQTT because of invalid sensor pairing! This could potentially be an attack! If the sensor is new or has been replaced by you do a (re)pairing in settings page.");
+          #endif
+        } else {          
+            notifyClients("Security issue! Match was not sent by MQTT because of invalid sensor pairing! This could potentially be an attack! If the sensor is new or has been replaced by you do a (re)pairing in settings page.");
           #ifdef KNXFEATURE
             notifyKNX("Pairing inval");
           #endif
         }
         currentMode = Mode::wait; //replaces delay(2000) i hate delays // wait some time before next scan to let the LED blink
-      } 
+      }      
       break;
+
     case ScanResult::noMatchFound:
-    allowNewMatch = true;
+      allowNewMatch = true;
       notifyClients(String("No Match Found (Code ") + match.returnCode + ")");
-      if (match.scanResult != lastMatch.scanResult) {
-         doorBell_trigger = true;  
-        digitalWrite(doorbellOutputPin, HIGH);
-        #ifdef MQTTFEATURE 
-          mqttClient.publish((String(mqttRootTopic) + "/ring").c_str(), "on");
-          mqttClient.publish((String(mqttRootTopic) + "/matchId").c_str(), "-1");
-          mqttClient.publish((String(mqttRootTopic) + "/matchName").c_str(), "");
-          mqttClient.publish((String(mqttRootTopic) + "/matchConfidence").c_str(), "-1");
+      if (match.scanResult != lastMatch.scanResult) {        
+        doorBell_trigger = true;        
+        
+        #ifdef MQTTFEATURE        
+           mqttClient.publish((String(mqttRootTopic) + "/matchId").c_str(), "-1");
+           mqttClient.publish((String(mqttRootTopic) + "/matchName").c_str(), "");
+           mqttClient.publish((String(mqttRootTopic) + "/matchConfidence").c_str(), "-1");
         #endif
-        Serial.println("MQTT message sent: ring the bell!");
+        #ifdef DEBUG
+           Serial.println("Message sent: ring the bell!");
+        #endif                       
         currentMode = Mode::wait; //replaces delay(2000) i hate delays // wait some time before next scan to let the LED blink        
-        digitalWrite(doorbellOutputPin, LOW); 
       } else {
-        // delay(1000); // wait some time before next scan to let the LED blink
+        
       }
       break;
+
     case ScanResult::error:
       notifyClients(String("ScanResult Error (Code ") + match.returnCode + ")");
       break;
@@ -1683,7 +1751,8 @@ void doEnroll()
     notifyClients("Invalid memory slot id '" + enrollId + "'");
     return;
   }
- String name;
+
+  String name;
     if (enrollName == "")
     {      
       if (fingerManager.fingerList[id] == "@empty")
@@ -1697,9 +1766,7 @@ void doEnroll()
       name = enrollName;
     }
 
-  //TODO: NewFinger finger = fingerManager.enrollFinger(id, enrollName);
   NewFinger finger = fingerManager.enrollFinger(id, name, settingsManager.getAppSettings().tpScans);
-  
   if (finger.enrollResult == EnrollResult::ok) {
     notifyClients("Enrollment successfull. You can now use your new finger for scanning.");
     updateClientsFingerlist(fingerManager.getFingerListAsHtmlOptionList());
@@ -1708,8 +1775,6 @@ void doEnroll()
   }
 }
 
-
-
 void reboot()
 {
   notifyClients("System is rebooting now...");
@@ -1717,64 +1782,57 @@ void reboot()
     
   #ifdef MQTTFEATURE
   mqttClient.disconnect();
-  #endif 
+  #endif  
   espClient.stop();
   dnsServer.stop();
-  webServer.end();
-  WiFi.disconnect();
+  webServer.end();  
+  WiFi.disconnect();  
   ESP.restart();
 }
 
-
 void setup()
-{
-  // open serial monitor for debug infos
+{   
+
+  #ifdef DEBUG
+  // open serial monitor for debug infos  
   Serial.begin(115200);
   while (!Serial);  // For Yun/Leo/Micro/Zero/...
-  delay(100);
-
-  // initialize GPIOs
-  pinMode(doorbellOutputPin, OUTPUT); 
-  #ifdef CUSTOM_GPIOS
+  delay(100);   
+  #endif  
+    
+  #ifdef CUSTOM_GPIOS     
     pinMode(customOutput1, OUTPUT); 
-    pinMode(customOutput2, OUTPUT); 
+    pinMode(customOutput2, OUTPUT);
+    pinMode(doorbellOutputPin, OUTPUT);    
     pinMode(customInput1, INPUT_PULLDOWN);
-    pinMode(customInput2, INPUT_PULLDOWN);
+    pinMode(customInput2, INPUT_PULLDOWN);    
   #endif  
 
-  WiFi.onEvent(WiFiEvent);
-  ETH.begin();
-  int counter = 0;
-  while (!eth_connected && counter <= 20) {
-    delay (500);
-    Serial.print("eth_connected - ");
-    Serial.println(eth_connected);
-    counter++;
-  }
-  if (!eth_connected){
-    settingsManager.loadWifiSettings();
-    
-  }
-
-  settingsManager.loadAppSettings();
+  settingsManager.loadWifiSettings();
+  settingsManager.loadAppSettings();  
   settingsManager.loadKNXSettings(); 
   fingerManager.connect();
   
   if (!checkPairingValid())
     notifyClients("Security issue! Pairing with sensor is invalid. This could potentially be an attack! If the sensor is new or has been replaced by you do a (re)pairing in settings page. MQTT messages regarding matching fingerprints will not been sent until pairing is valid again.");
 
-  if ( (!eth_connected) && (fingerManager.isFingerOnSensor() || !settingsManager.isWifiConfigured()) )
+  if (fingerManager.isFingerOnSensor() || !settingsManager.isWifiConfigured())
   {
     // ring touched during startup or no wifi settings stored -> wifi config mode
     currentMode = Mode::wificonfig;
+    #ifdef DEBUG
     Serial.println("Started WiFi-Config mode");
+    #endif
     fingerManager.setLedRingWifiConfig();
     initWiFiAccessPointForConfiguration();
     startWebserver();
 
   } else {
+    #ifdef DEBUG
     Serial.println("Started normal operating mode");
+    #endif
     currentMode = Mode::scan;
+    //sntp_set_time_sync_notification_cb(cbSyncTime);
     if (initWifi()) {
       startWebserver();
       #ifdef MQTTFEATURE
@@ -1782,17 +1840,17 @@ void setup()
         mqttConfigValid = false;
         notifyClients("Error: No MQTT Broker is configured! Please go to settings and enter your server URL + user credentials.");
       } else {
-        delay(5000);
+        delay(1000);
         IPAddress mqttServerIp;
         if (WiFi.hostByName(settingsManager.getAppSettings().mqttServer.c_str(), mqttServerIp))
         {
           mqttConfigValid = true;
-          // Serial.println("IP used for MQTT server: " + mqttServerIp.toString());
+          #ifdef DEBUG
+          //Serial.println("IP used for MQTT server: " + mqttServerIp.toString());
           Serial.println("IP used for MQTT server: " + mqttServerIp.toString() + " | Port: " + String(settingsManager.getAppSettings().mqttPort));          
-          
-          // mqttClient.setServer(mqttServerIp , 1883);
+          #endif          
+          //mqttClient.setServer(mqttServerIp , 1883);
           mqttClient.setServer(mqttServerIp , settingsManager.getAppSettings().mqttPort);
-          
           mqttClient.setCallback(mqttCallback);
           connectMqttClient();
         }
@@ -1803,11 +1861,11 @@ void setup()
       }
       #endif
       if (fingerManager.connected)
-        fingerManager.setLedRingReady();
+        fingerManager.setLedRingReady();              
       else
         fingerManager.setLedRingError();
-
-            #ifdef KNXFEATURE      
+      
+      #ifdef KNXFEATURE      
         SetupKNX();
         knx.start();
         loadKNXremanentData();
@@ -1823,7 +1881,7 @@ void setup()
 }
 
 void loop()
-{
+{  
   // shouldReboot flag for supporting reboot through webui
   if (shouldReboot) {
     reboot();
@@ -1832,26 +1890,30 @@ void loop()
   // Reconnect handling
   if (currentMode != Mode::wificonfig)
   {
-    unsigned long currentMillis = millis();
+    unsigned long now = millis();
     // reconnect WiFi if down for 30s
-    if ( (!eth_connected) && (WiFi.status() != WL_CONNECTED) && (currentMillis - wifiReconnectPreviousMillis >= 30000ul)) {
+    if ((WiFi.status() != WL_CONNECTED) && (now - wifiReconnectPreviousMillis >= 5000ul)) {
+      #ifdef DEBUG
       Serial.println("Reconnecting to WiFi...");
+      #endif
+      notifyClients("Reconnecting to WiFi...");
       WiFi.disconnect();
       WiFi.reconnect();
-      wifiReconnectPreviousMillis = currentMillis;
+      wifiReconnectPreviousMillis = now;
     }
 
     // reconnect mqtt if down
     #ifdef MQTTFEATURE
     if (!settingsManager.getAppSettings().mqttServer.isEmpty()) {
-      if (!mqttClient.connected() && (currentMillis - mqttReconnectPreviousMillis >= 30000ul)) {
+      if (!mqttClient.connected() && (now - mqttReconnectPreviousMillis >= 5000ul)) {
         connectMqttClient();
-        mqttReconnectPreviousMillis = currentMillis;
+        mqttReconnectPreviousMillis = now;
       }
       mqttClient.loop();
     }
     #endif
   }
+
 
 
   // do the actual loop work
@@ -1862,15 +1924,13 @@ void loop()
       doScan();
     break;
 
-   case Mode::wait:
+  case Mode::wait:
      doWait(wait_Duration);
     break;
-  
   
   case Mode::enroll:
     doEnroll();
     doorBell_block_trigger = true; // block Doorbell for n seconds because sometimes it gets triggered here
-    
     currentMode = Mode::scan; // switch back to scan mode after enrollment is done
     break;
   
@@ -1887,6 +1947,7 @@ void loop()
   // enter maintenance mode (no continous scanning) if requested
   if (needMaintenanceMode)
     currentMode = Mode::maintenance;
+
 doRssiStatus();
  
 #ifdef KNXFEATURE 
@@ -1905,7 +1966,7 @@ doorEnableStateToKNX();
 doDoorbellBlock();
 doDoorbell();
 
-  #ifdef CUSTOM_GPIOS
+#ifdef CUSTOM_GPIOS
     // read custom inputs and publish by MQTT
     bool i1;
     bool i2;
@@ -1926,11 +1987,12 @@ doDoorbell();
         else
           mqttClient.publish((String(mqttRootTopic) + "/customInput2").c_str(), "off");  
     }
+    
+    //doCustomOutputs();
 
     customInput1Value = i1;
     customInput2Value = i2;
-
-  #endif  
+#endif  
 
 }
 
