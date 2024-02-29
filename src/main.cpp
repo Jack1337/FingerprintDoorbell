@@ -95,7 +95,6 @@ const unsigned long doorbellTriggerTime = 1 * 1000UL; //Trigger 1000ms
 const int   doorbellOutputPin = 19; // pin connected to the doorbell (when using hardware connection instead of mqtt to ring the bell)
 #endif
 
-const int logMessagesCount = 10;
 String logMessages[logMessagesCount]; // log messages, 0=most recent log message
 bool shouldReboot = false;
 unsigned long wifiReconnectPreviousMillis = 0;

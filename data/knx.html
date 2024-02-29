@@ -1,0 +1,254 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <!-- created with https://bootstrapformbuilder.com/ -->
+  <title>FingerprintDoorbell</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" charset="utf-8">
+  <link rel="icon" href="data:,">
+  <link rel="stylesheet" href="https://maxcdn.bootstrapcdn.com/bootstrap/3.3.7/css/bootstrap.min.css" integrity="sha384-BVYiiSIFeK1dGmJRAkycuHAHRg32OmUcww7on3RYdg4Va+PmSTsz/K68vbdEjh4u" crossorigin="anonymous">
+  <style>
+	.alert-custom{
+		background-color:#cecece;
+		color:rgb(0, 0, 0);
+	}
+	.form-horizontal{
+		margin-left: 15px;
+		margin-right: 15px;
+	}
+  </style>
+</head>
+<body>
+	<script>
+		if (!!window.EventSource) {
+			var source = new EventSource('/events');
+
+			source.addEventListener('open', function(e) {
+				console.log("Events Connected");
+			}, false);
+
+			source.addEventListener('error', function(e) {
+				if (e.target.readyState != EventSource.OPEN) {
+				console.log("Events Disconnected");
+				}
+			}, false);
+
+			// event is fired when a new message from server was received
+			source.addEventListener('message', function(e) {
+				console.log("message", e.data);
+				document.getElementById('logMessages').innerHTML = event.data;
+			}, false);
+
+		}
+    </script>
+
+	<nav class="navbar navbar-inverse">
+		<div class="container-fluid">
+		  <div class="navbar-header">
+			<a class="navbar-brand" href="/">%HOSTNAME%</a>
+		  </div>
+		  <ul class="nav navbar-nav">
+			<li><a href="/">Fingerprints</a></li>
+			<li><a href="settings">Settings</a></li>
+			<li class="active"><a href="#">KNX</a></li>
+		  </ul>
+		</div>
+	</nav>
+
+	<div class="alert alert-custom" id="logMessages" role="alert">%LOGMESSAGES%</div>
+
+	<form class="form-horizontal" action="/editFingerprints">
+		<fieldset>
+	
+		<!-- Form Name -->
+		<legend>Fingerprints</legend>
+	
+		<!-- Select Multiple -->
+		<div class="form-group">
+		  <label class="col-md-4 control-label" for="selectedFingerprint">Fingerprints in DB</label>
+		  <div class="col-md-4">
+			<select id="selectedFingerprint" name="selectedFingerprint" class="form-control" size="10">
+			  <!--option value="1">1 - Option one</option-->
+			  %FINGERLIST%
+			</select>
+			<input type="hidden" id="renameNewName" name="renameNewName" type="text" class="form-control input-md">
+		  </div>
+		</div>			
+	
+		</fieldset>
+		</form>
+
+	<form class="form-horizontal" action="/knx">
+	<fieldset>
+
+	<!-- Form Name -->
+	<legend>KNX</legend>	
+	
+	<!-- Text input-->
+	<div class="form-group">
+		<label class="col-md-4 control-label" for="door1_list">Finger Mapping Door1</label>  
+		<div class="col-md-4">
+		<input id="door1_list" name="door1_list" type="text" placeholder="comma seperated list in format 1,3,7,11,15" class="form-control input-md" value="%DOOR1_LIST%">
+		<small class="text-muted">List Format: 1,3,7,11,15</small>		
+		</div>
+	</div>
+
+	<!-- Text input-->
+	<div class="form-group">
+		<label class="col-md-4 control-label" for="door2_list">Finger Mapping Door2</label>  
+		<div class="col-md-4">
+		<input id="door2_list" name="door2_list" type="text" placeholder="comma seperated list in format 1,3,7,11,15" class="form-control input-md" value="%DOOR2_LIST%">
+		<small class="text-muted">List Format: 1,3,7,11,15</small>		
+		</div>
+	</div>	
+
+	<div class="form-group">
+		<label class="col-md-4 control-label" for="knxrouter_ip">KNX Interface IP Address</label>  
+		<div class="col-md-4">
+		<input id="knxrouter_ip" name="knxrouter_ip" type="text" placeholder="IP Address in format 192.168.0.199" class="form-control input-md" value="%KNXROUTER_IP%">
+		<small class="text-muted">IP Address Format: 192.168.0.199</small>		
+		</div>
+	</div>
+
+	<div class="form-group">
+		<label class="col-md-4 control-label" for="door1_ga">[OUT] Door_1 Group Address</label>  
+		<div class="col-md-4">
+		<input id="door1_ga" name="door1_ga" type="text" placeholder="Group Address in format 7/3/35" class="form-control input-md" value="%DOOR1_GA%">
+		<small class="text-muted">GA Format: 7/3/35</small>		
+		</div>
+	</div>
+
+	<div class="form-group">
+		<label class="col-md-4 control-label" for="door2_ga">[OUT] Door_2 Group Address</label>  
+		<div class="col-md-4">
+		<input id="door2_ga" name="door2_ga" type="text" placeholder="Group Address in format 3/5/1" class="form-control input-md" value="%DOOR2_GA%">
+		<small class="text-muted">GA Format: 3/5/1</small>		
+		</div>
+	</div>
+
+	<div class="form-group">
+		<label class="col-md-4 control-label" for="doorbell_ga">[OUT] Door Bell Group Address</label>  
+		<div class="col-md-4">
+		<input id="doorbell_ga" name="doorbell_ga" type="text" placeholder="Group Address in format 7/3/31" class="form-control input-md" value="%DOORBELL_GA%">
+		<small class="text-muted">GA Format: 7/3/31</small>		
+		</div>
+	</div>
+
+	<div class="form-group">
+		<label class="col-md-4 control-label" for="alarmdisable_ga">[OUT] Alarm / EMA Disable Group Address</label>  
+		<div class="col-md-4">
+		<input id="alarmdisable_ga" name="alarmdisable_ga" type="text" placeholder="Group Address in format 7/7/22" class="form-control input-md" value="%ALARMDISABLE_GA%">
+		<small class="text-muted">GA Format: 7/7/22</small>		
+		</div>
+	</div>
+
+	<div class="form-group">
+		<label class="col-md-4 control-label" for="autounarm_ga">[OUT] Inform Display about automatic disabling the Alarm / EMA System Group Address</label>
+		<div class="col-md-4">
+		<input id="autounarm_ga" name="autounarm_ga" type="text" placeholder="Group Address in format 7/3/111" class="form-control input-md" value="%AUTOUNARM_GA%">
+		<small class="text-muted">GA Format: 7/3/111</small>		
+		</div>
+	</div>
+
+	<div class="form-group">
+		<label class="col-md-4 control-label" for="alarmarmed_ga">[IN] Status ARMED/UNARMED from Alarm / EMA System Group Address</label>  
+		<div class="col-md-4">
+		<input id="alarmarmed_ga" name="alarmarmed_ga" type="text" placeholder="Group Address in format 7/7/23" class="form-control input-md" value="%ALARMARMED_GA%">
+		<small class="text-muted">GA Format: 7/7/23</small>		
+		</div>
+	</div>
+
+	<div class="form-group">
+		<label class="col-md-4 control-label" for="led_ga">[IN] LED_ON/OFF Group Address</label>  
+		<div class="col-md-4">
+		<input id="led_ga" name="led_ga" type="text" placeholder="Group Address in format 7/5/121" class="form-control input-md" value="%LED_GA%">
+		<small class="text-muted">GA Format: 7/5/121</small>		
+		</div>
+	</div>
+
+	<div class="form-group">
+		<label class="col-md-4 control-label" for="ledstate_ga">[OUT] LED_ON/OFF State Group Address</label>  
+		<div class="col-md-4">
+		<input id="ledstate_ga" name="ledstate_ga" type="text" placeholder="Group Address in format 7/5/123" class="form-control input-md" value="%LEDSTATE_GA%">
+		<small class="text-muted">GA Format: 7/5/123</small>		
+		</div>
+	</div>
+
+	<div class="form-group">
+		<label class="col-md-4 control-label" for="touch_ga">[IN] Touch_Ring_Ignore Group Address</label>  
+		<div class="col-md-4">
+		<input id="touch_ga" name="touch_ga" type="text" placeholder="Group Address in format 7/5/122" class="form-control input-md" value="%TOUCH_GA%">
+		<small class="text-muted">GA Format: 7/5/122</small>		
+		</div>
+	</div>
+
+	<div class="form-group">
+		<label class="col-md-4 control-label" for="touchstate_ga">[OUT] Touch_Ring_Ignore State Group Address</label>  
+		<div class="col-md-4">
+		<input id="touchstate_ga" name="touchstate_ga" type="text" placeholder="Group Address in format 7/5/124" class="form-control input-md" value="%TOUCHSTATE_GA%">
+		<small class="text-muted">GA Format: 7/5/124</small>		
+		</div>
+	</div>
+
+	<div class="form-group">
+		<label class="col-md-4 control-label" for="doorenable_ga">[IN] Enable_Door_Opening Group Address</label>  
+		<div class="col-md-4">
+		<input id="doorenable_ga" name="doorenable_ga" type="text" placeholder="Group Address in format 7/5/125" class="form-control input-md" value="%DOORENABLE_GA%">
+		<small class="text-muted">GA Format: 7/5/125</small>		
+		</div>
+	</div>
+
+	<div class="form-group">
+		<label class="col-md-4 control-label" for="doorenstate_ga">[OUT] Enable_Door_Opening State Group Address</label>  
+		<div class="col-md-4">
+		<input id="doorenstate_ga" name="doorenstate_ga" type="text" placeholder="Group Address in format 7/5/126" class="form-control input-md" value="%DOORENABLESTATE_GA%">
+		<small class="text-muted">GA Format: 7/5/126</small>		
+		</div>
+	</div>
+
+	<div class="form-group">
+		<label class="col-md-4 control-label" for="ringenable_ga">[IN] Enable_Doorbell_Ringing Group Address</label>  
+		<div class="col-md-4">
+		<input id="ringenable_ga" name="ringenable_ga" type="text" placeholder="Group Address in format 7/5/127" class="form-control input-md" value="%RINGENABLE_GA%">
+		<small class="text-muted">GA Format: 7/5/127</small>		
+		</div>
+	</div>
+
+	<div class="form-group">
+		<label class="col-md-4 control-label" for="ringenstate_ga">[OUT] Enable_Doorbell_Ringing State Group Address</label>  
+		<div class="col-md-4">
+		<input id="ringenstate_ga" name="ringenstate_ga" type="text" placeholder="Group Address in format 7/5/128" class="form-control input-md" value="%RINGENABLESTATE_GA%">
+		<small class="text-muted">GA Format: 7/5/128</small>		
+		</div>
+	</div>
+	
+		<div class="form-group">
+		<label class="col-md-4 control-label" for="message_ga">[OUT] Message Feedback Group Address</label>  
+		<div class="col-md-4">
+		<input id="message_ga" name="message_ga" type="text" placeholder="Group Address in format 7/5/120" class="form-control input-md" value="%MESSAGE_GA%">
+		<small class="text-muted">GA Format: 7/5/120</small>		
+		</div>
+	</div>	
+
+	
+
+	<!-- Button -->
+	<div class="form-group">
+	  <label class="col-md-4 control-label" for="btnSaveSettings"></label>
+	  <div class="col-md-4">
+		<button id="btnSaveSettings" name="btnSaveSettings" class="btn btn-success">Save and Restart</button>
+	  </div>
+	</div>
+
+	</fieldset>
+	</form>
+
+
+	<p></p>
+	<nav class="navbar navbar-default ">
+		<div class="container-fluid">
+		  <p class="navbar-text">Ver.: %VERSIONINFO% | RSSI: %RSSIINFO% | DOOR_ENABLED: %DOORENB_STATE% | RING_ENABLED: %RINGENB_STATE% |LED: %LED_STATE% | TOUCH: %TOUCH_STATE% | ALARMSYSTEM: %ALARMSYSTEM_STATE%</p>
+		</div>
+	</nav>
+
+</body>
+</html>

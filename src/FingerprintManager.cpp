@@ -1,34 +1,48 @@
+#include "Arduino.h"
 #include "FingerprintManager.h"
 #include "global.h"
-
 #include <Adafruit_Fingerprint.h>
+#define mySerial Serial
+
+Adafruit_Fingerprint finger = Adafruit_Fingerprint(&mySerial);
 
 bool FingerprintManager::connect() {
   
-    // initialize input pins
+    // initialize input pins    
     pinMode(touchRingPin, INPUT_PULLDOWN);
 
+    #ifdef DEBUG
     Serial.println("\n\nAdafruit finger detect test");
+    #endif
 
-    // set the data rate for the sensor serial port
-    finger.begin(57600);
+    // set the data rate for the sensor serial port    
+    finger.begin(57600);        
     delay(50);
     if (finger.verifyPassword()) {
+        #ifdef DEBUG
         Serial.println("Found fingerprint sensor!");
+        #endif
     } else {
-        delay(5000); // wait a bit longer for sensor to start before 2nd try (usually after a OTA-Update the esp32 is faster with startup than the fingerprint sensor)
+        delay(5000); // wait a bit longer for sensor to start before 2nd try (usually after a OTA-Update the esp32 is faster with startup than the fingerprint sensor)        
         if (finger.verifyPassword()) { 
+          #ifdef DEBUG
           Serial.println("Found fingerprint sensor!");
+          #endif
         } else {
+          #ifdef DEBUG
           Serial.println("Did not find fingerprint sensor :(");
+          #endif
           connected = false;
           return connected;
         }
-    }
-    finger.LEDcontrol(FINGERPRINT_LED_FLASHING, 25, FINGERPRINT_LED_BLUE, 0); // sensor connected signal
+    }   
+    finger.LEDcontrol(FINGERPRINT_LED_FLASHING, 25, FINGERPRINT_LED_BLUE, 0); // sensor connected signal    
 
+    #ifdef DEBUG
     Serial.println(F("Reading sensor parameters"));
+    #endif
     finger.getParameters();
+    #ifdef DEBUG
     Serial.print(F("Status: 0x")); Serial.println(finger.status_reg, HEX);
     Serial.print(F("Sys ID: 0x")); Serial.println(finger.system_id, HEX);
     Serial.print(F("Capacity: ")); Serial.println(finger.capacity);
@@ -36,9 +50,12 @@ bool FingerprintManager::connect() {
     Serial.print(F("Device address: ")); Serial.println(finger.device_addr, HEX);
     Serial.print(F("Packet len: ")); Serial.println(finger.packet_len);
     Serial.print(F("Baud rate: ")); Serial.println(finger.baud_rate);
+    #endif
 
     finger.getTemplateCount();
+    #ifdef DEBUG
     Serial.print("Sensor contains "); Serial.print(finger.templateCount); Serial.println(" templates");
+    #endif
 
     loadFingerListFromPrefs();
 
@@ -54,7 +71,7 @@ void FingerprintManager::updateTouchState(bool touched)
       // check if sensor or ring is touched
       if (touched) {
         // turn touch indicator on:
-        finger.LEDcontrol(FINGERPRINT_LED_FLASHING, 25, FINGERPRINT_LED_RED, 0);
+        finger.LEDcontrol(FINGERPRINT_LED_FLASHING, 8, FINGERPRINT_LED_WHITE, 0);
       } else {
         // turn touch indicator off:
         setLedRingReady();
@@ -147,11 +164,15 @@ Match FingerprintManager::scanFingerprint() {
             return match;
           }
         case FINGERPRINT_IMAGEFAIL:
+          #ifdef DEBUG
           Serial.println("Imaging error");
+          #endif
           updateTouchState(true);
           return match;
         default:
+          #ifdef DEBUG
           Serial.println("Unknown error");
+          #endif
           return match;
       }
     
@@ -167,19 +188,29 @@ Match FingerprintManager::scanFingerprint() {
         updateTouchState(true);
         break;
       case FINGERPRINT_IMAGEMESS:
+        #ifdef DEBUG
         Serial.println("Image too messy");
+        #endif
         return match;
       case FINGERPRINT_PACKETRECIEVEERR:
+        #ifdef DEBUG
         Serial.println("Communication error");
+        #endif
         return match;
       case FINGERPRINT_FEATUREFAIL:
+        #ifdef DEBUG
         Serial.println("Could not find fingerprint features");
+        #endif
         return match;
       case FINGERPRINT_INVALIDIMAGE:
+        #ifdef DEBUG
         Serial.println("Could not find fingerprint features");
+        #endif
         return match;
       default:
+        #ifdef DEBUG
         Serial.println("Unknown error");
+        #endif
         return match;
     }
 
@@ -189,7 +220,7 @@ Match FingerprintManager::scanFingerprint() {
     match.returnCode = finger.fingerSearch();
     if (match.returnCode == FINGERPRINT_OK) {
         // found a match!
-        finger.LEDcontrol(FINGERPRINT_LED_ON, 0, FINGERPRINT_LED_PURPLE);
+        finger.LEDcontrol(FINGERPRINT_LED_ON, 0, FINGERPRINT_LED_GREEN);
         
         match.scanResult = ScanResult::matchFound;
         match.matchId = finger.fingerID;
@@ -197,16 +228,24 @@ Match FingerprintManager::scanFingerprint() {
         match.matchName = fingerList[finger.fingerID];
       
     } else if (match.returnCode == FINGERPRINT_PACKETRECIEVEERR) {
+        #ifdef DEBUG
         Serial.println("Communication error");
+        #endif
 
     } else if (match.returnCode == FINGERPRINT_NOTFOUND) {
+        #ifdef DEBUG
         Serial.println(String("Did not find a match. (Scan #") + scanPass + String(" of 5)"));
+        #endif
         match.scanResult = ScanResult::noMatchFound;
+        // turn touch indicator to error:
+        finger.LEDcontrol(FINGERPRINT_LED_FLASHING, 25, FINGERPRINT_LED_RED, 0);
         if (scanPass < 5) // max 5 Scans until no match found is given back as result
           doAnotherScan = true;
 
     } else {
+        #ifdef DEBUG
         Serial.println("Unknown error");
+        #endif
     }
 
   } //while
@@ -231,7 +270,9 @@ void FingerprintManager::loadFingerListFromPrefs() {
     else
       fingerList[i] = String("@empty");
   }
+  #ifdef DEBUG
   Serial.println(String(counter) + " fingers loaded from preferences.");
+  #endif
   if (counter != finger.templateCount)
     notifyClients(String("Warning: Fingerprint count mismatch! ") + finger.templateCount + " fingerprints stored on sensor, but we are aware of " + counter + " fingerprints.");
   preferences.end();
@@ -239,7 +280,7 @@ void FingerprintManager::loadFingerListFromPrefs() {
 
 
 // Add/Enroll fingerprint
-NewFinger FingerprintManager::enrollFinger(int id, String name) {
+NewFinger FingerprintManager::enrollFinger(int id, String name, int samples = 5) {
 
   NewFinger newFinger;
   newFinger.enrollResult = EnrollResult::error;
@@ -247,11 +288,11 @@ NewFinger FingerprintManager::enrollFinger(int id, String name) {
   lastTouchState = true; // after enrollment, scan mode kicks in again. Force update of the ring light back to normal on first iteration of scan mode.
 
   
-  notifyClients(String("Enrollment for id #") + id + " started. We need to scan your finger 5 times until enrollment is completed.");
+  notifyClients(String("Enrollment for id #") + id + " started. We need to scan your finger "+ samples +" times until enrollment is completed.");
 
   
   // Repeat n times to get better resulting templates (as stated in R503 documentation up to 6 combined image samples possible, but I got an communication error when trying more than 5 samples, so dont go >5)
-  for (int nTimes=1; nTimes<=5; nTimes++)
+  for (int nTimes=1; nTimes<=samples; nTimes++)
   {
       notifyClients(String("Take #" + String(nTimes))+ " (place your finger on the sensor until led ring stops flashing, then remove it).");
 
@@ -264,25 +305,35 @@ NewFinger FingerprintManager::enrollFinger(int id, String name) {
         }
       }
       
+      #ifdef DEBUG
       Serial.print("Taking image sample "); Serial.print(nTimes); Serial.print(": ");
+      #endif
       finger.LEDcontrol(FINGERPRINT_LED_FLASHING, 25, FINGERPRINT_LED_PURPLE, 0);
       newFinger.returnCode = 0xFF;
       while (newFinger.returnCode != FINGERPRINT_OK) {
         newFinger.returnCode = finger.getImage();
         switch (newFinger.returnCode) {
         case FINGERPRINT_OK:
+          #ifdef DEBUG
           Serial.print("taken, ");
+          #endif
           break;
         case FINGERPRINT_NOFINGER:
           break;
         case FINGERPRINT_PACKETRECIEVEERR:
+          #ifdef DEBUG
           Serial.print("Communication error, ");
+          #endif
           break;
         case FINGERPRINT_IMAGEFAIL:
+          #ifdef DEBUG
           Serial.print("Imaging error, ");
+          #endif
           break;
         default:
+          #ifdef DEBUG
           Serial.print("Unknown error, ");
+          #endif
           break;
         }
       }
@@ -292,22 +343,34 @@ NewFinger FingerprintManager::enrollFinger(int id, String name) {
       newFinger.returnCode = finger.image2Tz(nTimes);
       switch (newFinger.returnCode) {
         case FINGERPRINT_OK:
+          #ifdef DEBUG
           Serial.print("converted");
+          #endif
           break;
         case FINGERPRINT_IMAGEMESS:
+          #ifdef DEBUG
           Serial.print("too messy");
+          #endif
           return newFinger;
         case FINGERPRINT_PACKETRECIEVEERR:
+          #ifdef DEBUG
           Serial.print("Communication error");
+          #endif
           return newFinger;
         case FINGERPRINT_FEATUREFAIL:
+          #ifdef DEBUG
           Serial.print("Could not find fingerprint features");
+          #endif
           return newFinger;
         case FINGERPRINT_INVALIDIMAGE:
+          #ifdef DEBUG
           Serial.print("Could not find fingerprint features");
+          #endif
           return newFinger;
         default:
+          #ifdef DEBUG
           Serial.print("Unknown error");
+          #endif
           return newFinger;
       }
       finger.LEDcontrol(FINGERPRINT_LED_ON, 0, FINGERPRINT_LED_PURPLE);
@@ -317,27 +380,41 @@ NewFinger FingerprintManager::enrollFinger(int id, String name) {
   
 
   // OK converted!
+  #ifdef DEBUG
   Serial.println();
   Serial.print("Creating model for #");  Serial.println(id);
+  #endif
 
   newFinger.returnCode = finger.createModel();
   if (newFinger.returnCode == FINGERPRINT_OK) {
+    #ifdef DEBUG
     Serial.println("Prints matched!");
+    #endif
   } else if (newFinger.returnCode == FINGERPRINT_PACKETRECIEVEERR) {
+    #ifdef DEBUG
     Serial.println("Communication error");
+    #endif
     return newFinger;
   } else if (newFinger.returnCode == FINGERPRINT_ENROLLMISMATCH) {
+    #ifdef DEBUG
     Serial.println("Fingerprints did not match");
+    #endif
     return newFinger;
   } else {
+    #ifdef DEBUG
     Serial.println("Unknown error");
+    #endif
     return newFinger;
   }
 
+  #ifdef DEBUG
   Serial.print("ID "); Serial.println(id);
+  #endif
   newFinger.returnCode = finger.storeModel(id);
   if (newFinger.returnCode == FINGERPRINT_OK) {
+    #ifdef DEBUG
     Serial.println("Stored!");
+    #endif
     newFinger.enrollResult = EnrollResult::ok;
     // save to prefs
     fingerList[id] = name;
@@ -347,16 +424,24 @@ NewFinger FingerprintManager::enrollFinger(int id, String name) {
     preferences.end();
 
   } else if (newFinger.returnCode == FINGERPRINT_PACKETRECIEVEERR) {
+    #ifdef DEBUG
     Serial.println("Communication error");
+    #endif
     return newFinger;
   } else if (newFinger.returnCode == FINGERPRINT_BADLOCATION) {
+    #ifdef DEBUG
     Serial.println("Could not store in that location");
+    #endif
     return newFinger;
   } else if (newFinger.returnCode == FINGERPRINT_FLASHERR) {
+    #ifdef DEBUG
     Serial.println("Error writing to flash");
+    #endif
     return newFinger;
   } else {
+    #ifdef DEBUG
     Serial.println("Unknown error");
+    #endif
     return newFinger;
   }
 
@@ -381,7 +466,9 @@ void FingerprintManager::deleteFinger(int id) {
       preferences.begin("fingerList", false); 
       preferences.remove (String(id).c_str());
       preferences.end();
+      #ifdef DEBUG
       Serial.println(String("Finger template #") + id + " deleted from sensor and prefs.");
+      #endif
 
     }
   }
@@ -395,7 +482,9 @@ void FingerprintManager::renameFinger(int id, String newName) {
     preferences.begin("fingerList", false); 
     preferences.putString(String(id).c_str(), newName);
     preferences.end();
+    #ifdef DEBUG
     Serial.println(String("Finger template #") + id + " renamed from " + fingerList[id] + " to " + newName);
+    #endif
     fingerList[id] = newName;
   }
 }
@@ -417,13 +506,27 @@ String FingerprintManager::getFingerListAsHtmlOptionList() {
   return htmlOptions;
 }
 
+void FingerprintManager::setLedTouchRing(bool state) {
+  if (LedTouchRing != state) {
+    LedTouchRing = state;
+    if (state == true)
+      notifyClients("LedTouchRing is now 'on'");
+    else{
+      notifyClients("LedTouchRing is now 'off'");
+    }
+      setLedRingReady();
+  }
+}
+
 void FingerprintManager::setIgnoreTouchRing(bool state) {
   if (ignoreTouchRing != state) {
     ignoreTouchRing = state;
     if (state == true)
       notifyClients("IgnoreTouchRing is now 'on'");
-    else
+    else{
       notifyClients("IgnoreTouchRing is now 'off'");
+    }
+    setLedRingReady();
   }
 }
 
@@ -456,11 +559,16 @@ void FingerprintManager::setLedRingWifiConfig() {
 }
 
 void FingerprintManager::setLedRingReady() {
+  if (LedTouchRing){
   if (!ignoreTouchRing)
-    finger.LEDcontrol(FINGERPRINT_LED_BREATHING, 250, FINGERPRINT_LED_BLUE);
+    finger.LEDcontrol(FINGERPRINT_LED_ON, 0, FINGERPRINT_LED_CYAN);
+    //finger.LEDcontrol(FINGERPRINT_LED_BREATHING, 250, FINGERPRINT_LED_BLUE);	    
+    else
+    finger.LEDcontrol(FINGERPRINT_LED_ON, 0, FINGERPRINT_LED_BLUE); // Indicator switched off
+  }
   else
-    finger.LEDcontrol(FINGERPRINT_LED_ON, 0, FINGERPRINT_LED_BLUE); // just an indicator for me to see if touch ring is active or not
-}
+    finger.LEDcontrol(FINGERPRINT_LED_OFF, 0, FINGERPRINT_LED_BLUE); // just an indicator for me to see if touch ring is active or not
+}	
 
 bool FingerprintManager::deleteAll() {
   if (finger.emptyDatabase() == FINGERPRINT_OK)

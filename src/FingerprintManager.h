@@ -5,10 +5,24 @@
 #include <Preferences.h>
 #include "global.h"
 
-#define mySerial Serial
-
 #define FINGERPRINT_WRITENOTEPAD 0x18 // Write Notepad on sensor
 #define FINGERPRINT_READNOTEPAD 0x19 // Read Notepad from sensor
+
+#ifndef FINGERPRINT_LED_GREEN
+#define FINGERPRINT_LED_GREEN 0x04       //!< Green LED
+#endif
+
+#ifndef FINGERPRINT_LED_YELLOW
+#define FINGERPRINT_LED_YELLOW 0x05      //!< Yellow LED
+#endif
+
+#ifndef FINGERPRINT_LED_CYAN
+#define FINGERPRINT_LED_CYAN 0x06        //!< Cyan LED
+#endif
+
+#ifndef FINGERPRINT_LED_WHITE
+#define FINGERPRINT_LED_WHITE 0x07       //!< White LED
+#endif
 
 
 /*
@@ -34,13 +48,13 @@ struct NewFinger {
 };
 
 class FingerprintManager {       
-  private:
-    Adafruit_Fingerprint finger = Adafruit_Fingerprint(&mySerial);
+  private:    
     bool lastTouchState = false;
-    String fingerList[201];
+    //String fingerList[201];
     int fingerCountOnSensor = 0;
-    bool ignoreTouchRing = false; // set to true when the sensor is usually exposed to rain to avoid false ring events. Can also be set conditional by a rain sensor over MQTT
+    //bool ignoreTouchRing = false; // set to true when the sensor is usually exposed to rain to avoid false ring events. Can also be set conditional by a rain sensor over MQTT
     bool lastIgnoreTouchRing = false;
+    //bool LedTouchRing = true;
     
     void updateTouchState(bool touched);
     bool isRingTouched();
@@ -52,14 +66,18 @@ class FingerprintManager {
 
 
   public:
+    String fingerList[201];
+    bool LedTouchRing = true;
+    bool ignoreTouchRing = false; // set to true when the sensor is usually exposed to rain to avoid false ring events. Can also be set conditional by a rain sensor over MQTT
     bool connected;
     bool connect();
     Match scanFingerprint();
-    NewFinger enrollFinger(int id, String name);
+    NewFinger enrollFinger(int id, String name, int samples);
     void deleteFinger(int id);
     void renameFinger(int id, String newName);
     String getFingerListAsHtmlOptionList();
     void setIgnoreTouchRing(bool state);
+    void setLedTouchRing(bool state);
     bool isFingerOnSensor();
     void setLedRingError();
     void setLedRingWifiConfig();

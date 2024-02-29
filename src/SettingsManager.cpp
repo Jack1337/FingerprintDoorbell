@@ -17,7 +17,9 @@ bool SettingsManager::loadWifiSettings() {
 bool SettingsManager::loadAppSettings() {
     Preferences preferences;
     if (preferences.begin("appSettings", true)) {
+        appSettings.tpScans = preferences.getUShort("tpScans", (uint16_t) 5);
         appSettings.mqttServer = preferences.getString("mqttServer", String(""));
+        appSettings.mqttPort = preferences.getUShort("mqttPort", (uint16_t) 1883);
         appSettings.mqttUsername = preferences.getString("mqttUsername", String(""));
         appSettings.mqttPassword = preferences.getString("mqttPassword", String(""));
         appSettings.mqttRootTopic = preferences.getString("mqttRootTopic", String("fingerprintDoorbell"));
@@ -25,6 +27,34 @@ bool SettingsManager::loadAppSettings() {
         appSettings.sensorPin = preferences.getString("sensorPin", "00000000");
         appSettings.sensorPairingCode = preferences.getString("pairingCode", "");
         appSettings.sensorPairingValid = preferences.getBool("pairingValid", false);
+        preferences.end();
+        return true;
+    } else {
+        return false;
+    }
+}
+
+bool SettingsManager::loadKNXSettings() {
+    Preferences preferences;
+    if (preferences.begin("knxSettings", true)) {
+        knxSettings.door1_ga = preferences.getString("door1_ga", String(""));
+        knxSettings.door2_ga = preferences.getString("door2_ga", String(""));
+        knxSettings.doorenable_ga = preferences.getString("doorenable_ga", String(""));
+        knxSettings.doorenstate_ga = preferences.getString("doorenstate_ga", String(""));
+        knxSettings.ringenable_ga = preferences.getString("ringenable_ga", String(""));
+        knxSettings.ringenstate_ga = preferences.getString("ringenstate_ga", String(""));
+        knxSettings.doorbell_ga = preferences.getString("doorbell_ga", String(""));        
+        knxSettings.alarmdisable_ga = preferences.getString("alarmdisable_ga", String("")); 
+        knxSettings.alarmarmed_ga = preferences.getString("alarmarmed_ga", String("")); 
+        knxSettings.autounarm_ga = preferences.getString("autounarm_ga", String("")); 
+        knxSettings.led_ga = preferences.getString("led_ga", String(""));
+        knxSettings.ledstate_ga = preferences.getString("ledstate_ga", String(""));        
+        knxSettings.touch_ga = preferences.getString("touch_ga", String(""));
+        knxSettings.touchstate_ga = preferences.getString("touchstate_ga", String(""));
+        knxSettings.message_ga = preferences.getString("message_ga", String(""));                        
+        knxSettings.knxrouter_ip = preferences.getString("knxrouter_ip", String("192.168.0.199"));
+        knxSettings.door1_list = preferences.getString("door1_list", String(""));        
+        knxSettings.door2_list = preferences.getString("door2_list", String(""));       
         preferences.end();
         return true;
     } else {
@@ -41,10 +71,36 @@ void SettingsManager::saveWifiSettings() {
     preferences.end();
 }
 
+void SettingsManager::saveKNXSettings() {
+    Preferences preferences;
+    preferences.begin("knxSettings", false); 
+    preferences.putString("door1_ga", knxSettings.door1_ga);
+    preferences.putString("door2_ga", knxSettings.door2_ga);
+    preferences.putString("doorenable_ga", knxSettings.doorenable_ga);
+    preferences.putString("doorenstate_ga", knxSettings.doorenstate_ga);
+    preferences.putString("ringenable_ga", knxSettings.ringenable_ga);
+    preferences.putString("ringenstate_ga", knxSettings.ringenstate_ga);
+    preferences.putString("doorbell_ga", knxSettings.doorbell_ga);
+    preferences.putString("alarmdisable_ga", knxSettings.alarmdisable_ga);
+    preferences.putString("alarmarmed_ga", knxSettings.alarmarmed_ga);
+    preferences.putString("autounarm_ga", knxSettings.autounarm_ga);   
+    preferences.putString("led_ga", knxSettings.led_ga);
+    preferences.putString("ledstate_ga", knxSettings.ledstate_ga);
+    preferences.putString("touch_ga", knxSettings.touch_ga);
+    preferences.putString("touchstate_ga", knxSettings.touchstate_ga);
+    preferences.putString("message_ga", knxSettings.message_ga);    
+    preferences.putString("knxrouter_ip", knxSettings.knxrouter_ip);
+    preferences.putString("door1_list", knxSettings.door1_list);
+    preferences.putString("door2_list", knxSettings.door2_list);
+    preferences.end();
+}
+
 void SettingsManager::saveAppSettings() {
     Preferences preferences;
     preferences.begin("appSettings", false); 
+    preferences.putUShort("tpScans", appSettings.tpScans);
     preferences.putString("mqttServer", appSettings.mqttServer);
+    preferences.putUShort("mqttPort", appSettings.mqttPort);
     preferences.putString("mqttUsername", appSettings.mqttUsername);
     preferences.putString("mqttPassword", appSettings.mqttPassword);
     preferences.putString("mqttRootTopic", appSettings.mqttRootTopic);
@@ -57,6 +113,10 @@ void SettingsManager::saveAppSettings() {
 
 WifiSettings SettingsManager::getWifiSettings() {
     return wifiSettings;
+}
+
+KNXSettings SettingsManager::getKNXSettings() {
+    return knxSettings;
 }
 
 void SettingsManager::saveWifiSettings(WifiSettings newSettings) {
@@ -73,8 +133,20 @@ void SettingsManager::saveAppSettings(AppSettings newSettings) {
     saveAppSettings();
 }
 
+void SettingsManager::saveKNXSettings(KNXSettings newSettings) {
+    knxSettings = newSettings;
+    saveKNXSettings();
+}
+
 bool SettingsManager::isWifiConfigured() {
     if (wifiSettings.ssid.isEmpty() || wifiSettings.password.isEmpty())
+        return false;
+    else
+        return true;
+}
+
+bool SettingsManager::isKNXConfigured() {
+    if (knxSettings.door1_ga.isEmpty() || knxSettings.knxrouter_ip.isEmpty())
         return false;
     else
         return true;
@@ -100,13 +172,23 @@ bool SettingsManager::deleteWifiSettings() {
     return rc;
 }
 
+bool SettingsManager::deleteKNXSettings() {
+    bool rc;
+    Preferences preferences;
+    rc = preferences.begin("knxSettings", false); 
+    if (rc)
+        rc = preferences.clear();
+    preferences.end();
+    return rc;
+}
+
 String SettingsManager::generateNewPairingCode() {
 
     /* Create a SHA256 hash */
     SHA256 hasher;
 
     /* Put some unique values as input in our new hash */
-    hasher.doUpdate( String(esp_random()).c_str() ); // random number
+    hasher.doUpdate( String(esp_random()).c_str() ); // random number    
     hasher.doUpdate( String(millis()).c_str() ); // time since boot
     hasher.doUpdate(getTimestampString().c_str()); // current time (if NTP is available)
     hasher.doUpdate(appSettings.mqttUsername.c_str());
